@@ -15,11 +15,33 @@ export default function ResumeAnalyzer() {
 
     setLoading(true);
 
-    // 🔗 n8n webhook will go here later
-    setTimeout(() => {
+    const formData = new FormData();
+    formData.append("resume", file);
+    formData.append("job_description", jd);
+
+    try {
+      const response = await fetch(
+        "http://localhost:5678/webhook/db54a87c-f64d-4fea-a991-c3b13ca17aa9/webhook/resume/analyze",
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Webhook failed");
+      }
+
+      const data = await response.json();
+      console.log("n8n response:", data);
+
+      alert("Resume successfully sent to analyzer ✅");
+    } catch (error) {
+      console.error(error);
+      alert("Error connecting to n8n ❌");
+    } finally {
       setLoading(false);
-      alert("Frontend ready. Backend will connect via n8n.");
-    }, 1500);
+    }
   };
 
   return (
@@ -70,7 +92,7 @@ export default function ResumeAnalyzer() {
           </button>
         </div>
 
-        {/* RESULT UI (STATIC FOR NOW) */}
+        {/* STATIC RESULT UI (will be dynamic later) */}
         <div className="mt-10 border-t pt-8">
           <h2 className="text-xl font-semibold text-gray-900">
             ATS Analysis Result
