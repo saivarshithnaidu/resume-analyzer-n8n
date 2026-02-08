@@ -1,0 +1,144 @@
+{
+  "name": "CareerLens – ATS Resume Analyzer & Transformer",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "resume/analyze",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        200,
+        300
+      ],
+      "webhookId": "resume-analyze"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Resume Parsing Logic\n// In a real deployment, use a dedicated PDF/DOCX extraction node or library.\n// This node mocks the extraction for demonstration purposes or expects 'resumeText' in the body if testing via JSON.\n\nconst items = $input.all();\nreturn items.map(item => {\n  // 1. Try to get text from JSON body (testing)\n  let text = item.json.resumeText;\n\n  // 2. Logic to extract from binary would go here.\n  // e.g., const binaryData = item.binary.resume;\n  // const extracted = await pdfParse(binaryData);\n\n  if (!text) {\n    text = \"[ERROR] No resume text found. Please ensure the file is parsed correctly.\";\n  }\n\n  return {\n    json: {\n      resumeText: text,\n      jobRole: item.json.jobRole || \"General Role\",\n      jobDescription: item.json.jobDescription || \"Standard industry requirements apply.\"\n    }\n  };\n});"
+      },
+      "id": "resume-parsing",
+      "name": "Resume Parsing & Normalization",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o",
+          "mode": "list",
+          "cachedResultName": "GPT-4o"
+        },
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are CareerLens — an AI-powered Resume Transformation and Hiring Simulation Platform.\nYou are NOT a resume generator.\nYou MUST reuse all personal details exactly from Resume Text.\nYou MUST NOT invent skills, companies, or experience.\nIf data is missing, leave it blank.\n\nOUTPUT SCHEMA (Strict JSON only):\n{\n  \"analysis\": {\n    \"ats_score_current\": \"number (0–100)\",\n    \"recruiter_verdict_current\": \"ACCEPT | HOLD | REJECT\",\n    \"first_scan_observations\": [\"string\"],\n    \"role_match_explanation\": \"string\"\n  },\n  \"personas\": {\n    \"ats\": { \"verdict\": \"PASS | HOLD | REJECT\", \"reasons\": [\"string\"] },\n    \"tech_lead\": { \"verdict\": \"PASS | HOLD | REJECT\", \"reasons\": [\"string\"] },\n    \"hr\": { \"verdict\": \"PASS | HOLD | REJECT\", \"reasons\": [\"string\"] },\n    \"overall_decision\": \"ACCEPT | HOLD | REJECT\"\n  },\n  \"job_intelligence\": {\n    \"mandatory_skills\": [\"string\"],\n    \"preferred_skills\": [\"string\"],\n    \"ats_keywords\": [\"string\"]\n  },\n  \"skill_gap\": {\n    \"strong_matches\": [\"string\"],\n    \"partial_matches\": [\"string\"],\n    \"missing_critical_skills\": [\"string\"]\n  },\n  \"decision_log\": [\n    \"string explaining why resume changes were made\"\n  ],\n  \"optimized_resume\": {\n    \"ats_score_optimized\": \"number (80–90)\",\n    \"final_verdict\": \"ACCEPT | SHORTLIST\",\n    \"resume_text\": \"PLAIN TEXT RESUME WITH REAL LINE BREAKS\"\n  }\n}"
+            },
+            {
+              "role": "user",
+              "content": "Analyze the following resume for the role of: {{ $json.jobRole }}\n\nJob Description:\n{{ $json.jobDescription }}\n\nResume Text:\n{{ $json.resumeText }}"
+            }
+          ]
+        },
+        "jsonOutput": true
+      },
+      "id": "ai-analyzer",
+      "name": "AI Analyzer (OpenAI)",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [
+        700,
+        300
+      ],
+      "credentials": {
+        "openAiApi": {
+          "id": "BOARD_SPECIFIC_ID",
+          "name": "OpenAI Account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// JSON Validation Node\nconst items = $input.all();\n\nreturn items.map(item => {\n  let aiResponse = item.json.message ? item.json.message.content : item.json;\n  \n  // Ensure it's an object\n  if (typeof aiResponse === 'string') {\n    try {\n      aiResponse = JSON.parse(aiResponse);\n    } catch (e) {\n      throw new Error(\"AI Response is not valid JSON\");\n    }\n  }\n\n  // Schema Check Helper\n  const hasKeys = (obj, keys) => keys.every(key => key in obj);\n\n  // Validate Top Level Keys\n  const requiredKeys = [\"analysis\", \"personas\", \"job_intelligence\", \"skill_gap\", \"decision_log\", \"optimized_resume\"];\n  if (!hasKeys(aiResponse, requiredKeys)) {\n    throw new Error(\"Missing required top-level keys in AI response\");\n  }\n\n  // Validate Analysis\n  if (typeof aiResponse.analysis.ats_score_current !== 'number') throw new Error(\"Invalid analysis.ats_score_current\");\n\n  // Validate Optimized Resume\n  if (typeof aiResponse.optimized_resume.ats_score_optimized !== 'number') throw new Error(\"Invalid optimized_resume.ats_score_optimized\");\n  if (!aiResponse.optimized_resume.resume_text) throw new Error(\"Missing optimized_resume.resume_text\");\n\n  return {\n    json: {\n      ...aiResponse,\n      validation_status: \"passed\"\n    }\n  };\n});"
+      },
+      "id": "json-validation",
+      "name": "JSON Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        950,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ATS Decision Logic Node\nconst items = $input.all();\n\nreturn items.map(item => {\n  const data = item.json;\n  const atsScore = data.optimized_resume.ats_score_optimized;\n  \n  let finalDecision = \"HOLD\";\n  \n  // Logic: If optimized ATS score >= 80 -> SHORTLIST\n  if (atsScore >= 80) {\n    finalDecision = \"SHORTLIST\";\n  }\n  \n  // Add decision logic to the personas output as well for consistency\n  data.personas.final_automation_decision = finalDecision;\n  \n  return {\n    json: {\n      status: \"success\",\n      decision: finalDecision,\n      data: data\n    }\n  };\n});"
+      },
+      "id": "ats-decision",
+      "name": "ATS Decision Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [
+        1200,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Resume Parsing & Normalization",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Parsing & Normalization": {
+      "main": [
+        [
+          {
+            "node": "AI Analyzer (OpenAI)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Analyzer (OpenAI)": {
+      "main": [
+        [
+          {
+            "node": "JSON Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JSON Validation": {
+      "main": [
+        [
+          {
+            "node": "ATS Decision Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}
